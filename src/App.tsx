@@ -55,11 +55,28 @@ export default function App() {
   const [activePage, setActivePage] = useState<ActivePage>('home');
   const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState(false);
 
-  // Firebase Auth State (token kept strictly in memory)
+  // Auth State (token kept strictly in memory — supports both Customer Email/Password & Google Sign-In)
   const [fbUser, setFbUser] = useState<FirebaseUser | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState('');
+  const [authSuccessMsg, setAuthSuccessMsg] = useState('');
+  const [authFormMode, setAuthFormMode] = useState<'signin' | 'signup' | 'reset'>('signin');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  // Customer Sign In / Sign Up Form Fields
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [regFullName, setRegFullName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPhone, setRegPhone] = useState('');
+  const [regLocation, setRegLocation] = useState('Ibeju-Lekki, Lagos');
+  const [regBudget, setRegBudget] = useState('15000000');
+  const [regPassword, setRegPassword] = useState('');
+  const [regConfirmPassword, setRegConfirmPassword] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetPhone, setResetPhone] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
 
   // Platform Data from PostgreSQL
   const [properties, setProperties] = useState<PropertyItem[]>([]);
@@ -125,13 +142,14 @@ export default function App() {
           setAuthToken(token);
           if (user.email?.toLowerCase() === 'williamjoy621@gmail.com') {
             setPortalMode('admin');
+          } else {
+            setPortalMode('customer');
           }
         } catch {
           setAuthToken(null);
         }
       } else {
-        setAuthToken(null);
-        setProfile(null);
+        setAuthToken((prev) => (prev && prev.startsWith('jc_sess.') ? prev : null));
       }
       setAuthLoading(false);
     });
@@ -167,6 +185,9 @@ export default function App() {
         const data = await res.json();
         if (res.ok) {
           setProfile(data.profile);
+          if (data.profile?.role !== 'admin') {
+            setPortalMode('customer');
+          }
           setBookings(data.bookings || []);
           setOrders(data.orders || []);
           setPayments(data.payments || []);
@@ -198,12 +219,125 @@ export default function App() {
     }
   }, [authToken, portalMode, fetchBootstrapData, fetchDashboardData]);
 
+  const handleCustomerSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccessMsg('');
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: loginEmail.trim(),
+          password: loginPassword,
+        }),
+      });
+      const rawText = await res.text();
+      const data = JSON.parse(rawText);
+      if (!res.ok) {
+        throw new Error(data.error || 'Invalid email or password.');
+      }
+      setAuthToken(data.token);
+      setProfile(data.profile);
+      setPortalMode(data.profile?.role === 'admin' ? 'admin' : 'customer');
+      setLoginPassword('');
+      setActivePage('portal');
+    } catch (err: any) {
+      setAuthError(err.message || 'Sign in failed. Please check your credentials.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleCustomerSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccessMsg('');
+    if (regPassword !== regConfirmPassword) {
+      setAuthError('Passwords do not match. Please confirm your password.');
+      return;
+    }
+    if (regPassword.length < 6) {
+      setAuthError('Password must be at least 6 characters long.');
+      return;
+    }
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fullName: regFullName.trim(),
+          email: regEmail.trim(),
+          phone: regPhone.trim(),
+          password: regPassword,
+          preferredLocation: regLocation,
+          investmentBudget: Number(regBudget || 15000000),
+        }),
+      });
+      const rawText = await res.text();
+      const data = JSON.parse(rawText);
+      if (!res.ok) {
+        throw new Error(data.error || 'Could not create account.');
+      }
+      setAuthToken(data.token);
+      setProfile(data.profile);
+      setPortalMode(data.profile?.role === 'admin' ? 'admin' : 'customer');
+      setRegPassword('');
+      setRegConfirmPassword('');
+      setActivePage('portal');
+    } catch (err: any) {
+      setAuthError(err.message || 'Registration failed. Please try again.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleCustomerPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSuccessMsg('');
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: resetEmail.trim(),
+          phone: resetPhone.trim(),
+          newPassword: resetNewPassword,
+        }),
+      });
+      const rawText = await res.text();
+      const data = JSON.parse(rawText);
+      if (!res.ok) {
+        throw new Error(data.error || 'Password reset failed.');
+      }
+      setAuthToken(data.token);
+      setProfile(data.profile);
+      setPortalMode(data.profile?.role === 'admin' ? 'admin' : 'customer');
+      setResetNewPassword('');
+      setActivePage('portal');
+    } catch (err: any) {
+      setAuthError(err.message || 'Unable to reset password.');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     setAuthError('');
+    setAuthSuccessMsg('');
     try {
       const cred = await signInWithPopup(auth, googleAuthProvider);
       const token = await cred.user.getIdToken();
       setAuthToken(token);
+      if (cred.user.email?.toLowerCase() === 'williamjoy621@gmail.com') {
+        setPortalMode('admin');
+      } else {
+        setPortalMode('customer');
+      }
       setActivePage('portal');
     } catch (error: any) {
       setAuthError(
@@ -213,9 +347,19 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
-    await signOut(auth);
+    try {
+      await signOut(auth);
+    } catch {
+      // Ignore if signed in via customer session token
+    }
     setAuthToken(null);
     setProfile(null);
+    setBookings([]);
+    setOrders([]);
+    setPayments([]);
+    setMessages([]);
+    setNotifications([]);
+    setPortalMode('customer');
     setActivePage('home');
   };
 
@@ -385,7 +529,11 @@ export default function App() {
             onClick={() => setActivePage('portal')}
             className="px-4 py-2 text-xs font-semibold text-[#0B192C] bg-[#C59B27] rounded-lg hover:bg-[#d4aa32] transition-colors whitespace-nowrap shrink-0"
           >
-            {fbUser ? 'Client & Admin Portal' : 'Sign In / Portal'}
+            {authToken
+              ? profile?.role === 'admin'
+                ? 'Admin Console'
+                : 'My Account'
+              : 'Sign In / Sign Up'}
           </button>
         </div>
       </header>
@@ -1384,18 +1532,56 @@ export default function App() {
                 <Loader2 className="w-4 h-4 animate-spin text-[#9A7411]" />
                 Verifying session...
               </div>
-            ) : !fbUser || !authToken ? (
-              <div className="max-w-md mx-auto bg-white p-8 rounded-xl border border-slate-200 space-y-6">
+            ) : !authToken ? (
+              <div className="max-w-lg mx-auto bg-white p-8 rounded-xl border border-slate-200 space-y-6">
                 <div>
                   <div className="text-xs font-mono-tabular text-[#9A7411]">
-                    SECURE AUTHENTICATION &amp; SESSION PORTAL
+                    CLIENT AUTHENTICATION &amp; INVESTOR ACCOUNT PORTAL
                   </div>
                   <h1 className="text-2xl font-serif-display font-bold text-[#0B192C] mt-1">
-                    Sign In to JOY CONSULTANT
+                    {authFormMode === 'signup'
+                      ? 'Create Your JOY CONSULTANT Account'
+                      : authFormMode === 'reset'
+                      ? 'Reset Your Account Password'
+                      : 'Sign In to Your Customer Account'}
                   </h1>
                   <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                    Access your Customer Dashboard (inspection bookings, land purchase orders, Paystack receipts, saved properties) or the Administrator Management Console.
+                    Access your personal Customer Dashboard to manage land inspection bookings, purchase orders, Paystack receipts, title verification documents, and saved properties.
                   </p>
+                </div>
+
+                {/* Sign In / Sign Up Mode Tabs */}
+                <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-lg border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthFormMode('signin');
+                      setAuthError('');
+                      setAuthSuccessMsg('');
+                    }}
+                    className={`py-2 rounded-md font-semibold transition-colors ${
+                      authFormMode === 'signin'
+                        ? 'bg-[#0B192C] text-white'
+                        : 'text-slate-600 hover:text-[#0B192C]'
+                    }`}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthFormMode('signup');
+                      setAuthError('');
+                      setAuthSuccessMsg('');
+                    }}
+                    className={`py-2 rounded-md font-semibold transition-colors ${
+                      authFormMode === 'signup'
+                        ? 'bg-[#0B192C] text-white'
+                        : 'text-slate-600 hover:text-[#0B192C]'
+                    }`}
+                  >
+                    Sign Up (New Customer)
+                  </button>
                 </div>
 
                 {authError && (
@@ -1404,65 +1590,306 @@ export default function App() {
                   </div>
                 )}
 
+                {authSuccessMsg && (
+                  <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900">
+                    {authSuccessMsg}
+                  </div>
+                )}
+
+                {authFormMode === 'signin' && (
+                  <form onSubmit={handleCustomerSignIn} className="space-y-4 text-xs">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={loginEmail}
+                        onChange={(e) => setLoginEmail(e.target.value)}
+                        placeholder="you@domain.com"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-300"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="font-medium text-slate-700">
+                          Password
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthFormMode('reset');
+                            setAuthError('');
+                          }}
+                          className="text-[#9A7411] hover:underline font-medium"
+                        >
+                          Forgot Password?
+                        </button>
+                      </div>
+                      <input
+                        type="password"
+                        required
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        placeholder="Enter your password"
+                        className="w-full px-3 py-2.5 rounded-lg border border-slate-300"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={authSubmitting}
+                      className="w-full py-3 px-4 rounded-lg bg-[#0B192C] text-white font-semibold hover:bg-[#162B49] transition-colors flex items-center justify-center gap-2"
+                    >
+                      {authSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                      Sign In to Customer Dashboard
+                    </button>
+                  </form>
+                )}
+
+                {authFormMode === 'signup' && (
+                  <form onSubmit={handleCustomerSignUp} className="space-y-3.5 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">
+                          Full Name
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={regFullName}
+                          onChange={(e) => setRegFullName(e.target.value)}
+                          placeholder="e.g. Chinedu Okafor"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">
+                          Phone / WhatsApp Number
+                        </label>
+                        <input
+                          type="tel"
+                          required
+                          value={regPhone}
+                          onChange={(e) => setRegPhone(e.target.value)}
+                          placeholder="+2348144833743"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        placeholder="you@domain.com"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">
+                          Preferred Location
+                        </label>
+                        <select
+                          value={regLocation}
+                          onChange={(e) => setRegLocation(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white"
+                        >
+                          <option value="Ibeju-Lekki, Lagos">Ibeju-Lekki, Lagos</option>
+                          <option value="Epe Corridor, Lagos">Epe Corridor, Lagos</option>
+                          <option value="Victoria Island, Lagos">Victoria Island, Lagos</option>
+                          <option value="Guzape District, Abuja">Guzape District, Abuja</option>
+                          <option value="Moniya Axis, Ibadan">Moniya Axis, Ibadan</option>
+                          <option value="Centenary Corridor, Enugu">Centenary Corridor, Enugu</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">
+                          Target Budget (₦ NGN)
+                        </label>
+                        <input
+                          type="number"
+                          min={1000000}
+                          step={500000}
+                          value={regBudget}
+                          onChange={(e) => setRegBudget(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 font-mono-tabular"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">
+                          Password (Min. 6 chars)
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          minLength={6}
+                          value={regPassword}
+                          onChange={(e) => setRegPassword(e.target.value)}
+                          placeholder="Create password"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block font-medium text-slate-700 mb-1">
+                          Confirm Password
+                        </label>
+                        <input
+                          type="password"
+                          required
+                          minLength={6}
+                          value={regConfirmPassword}
+                          onChange={(e) => setRegConfirmPassword(e.target.value)}
+                          placeholder="Confirm password"
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={authSubmitting}
+                      className="w-full py-3 px-4 rounded-lg bg-[#0B192C] text-white font-semibold hover:bg-[#162B49] transition-colors flex items-center justify-center gap-2"
+                    >
+                      {authSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                      Create Account &amp; Open Customer Dashboard
+                    </button>
+                  </form>
+                )}
+
+                {authFormMode === 'reset' && (
+                  <form onSubmit={handleCustomerPasswordReset} className="space-y-4 text-xs">
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Registered Email Address
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={resetEmail}
+                        onChange={(e) => setResetEmail(e.target.value)}
+                        placeholder="you@domain.com"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        Phone Number (Optional Verification)
+                      </label>
+                      <input
+                        type="tel"
+                        value={resetPhone}
+                        onChange={(e) => setResetPhone(e.target.value)}
+                        placeholder="+2348144833743"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-medium text-slate-700 mb-1">
+                        New Password (Min. 6 chars)
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        minLength={6}
+                        value={resetNewPassword}
+                        onChange={(e) => setResetNewPassword(e.target.value)}
+                        placeholder="Enter new password"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300"
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="submit"
+                        disabled={authSubmitting}
+                        className="flex-1 py-2.5 px-4 rounded-lg bg-[#0B192C] text-white font-semibold hover:bg-[#162B49]"
+                      >
+                        {authSubmitting ? 'Updating...' : 'Update Password & Sign In'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAuthFormMode('signin')}
+                        className="px-4 py-2.5 rounded-lg border border-slate-300 text-slate-700"
+                      >
+                        Back to Sign In
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                <div className="relative py-1">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-slate-200" />
+                  </div>
+                  <div className="relative flex justify-center text-[11px] uppercase">
+                    <span className="bg-white px-2 text-slate-400">Or Continue With</span>
+                  </div>
+                </div>
+
                 <button
                   type="button"
                   onClick={handleGoogleSignIn}
-                  className="w-full py-3 px-4 rounded-lg bg-[#0B192C] text-white text-xs font-semibold hover:bg-[#162B49] transition-colors flex items-center justify-center gap-2"
+                  className="w-full py-2.5 px-4 rounded-lg border border-slate-300 text-[#0B192C] text-xs font-semibold hover:bg-slate-50 transition-colors flex items-center justify-center gap-2"
                 >
                   <ShieldCheck className="w-4 h-4 text-[#C59B27]" />
-                  Continue with Google Sign-In
+                  Continue with Google Account
                 </button>
-
-                <div className="pt-4 border-t border-slate-200 text-[11px] text-slate-500 space-y-1.5">
-                  <div>
-                    <strong>Role-Based Access:</strong> Signing in synchronizes your profile with our Cloud SQL PostgreSQL database and unlocks both Customer and Administrator views for evaluation.
-                  </div>
-                  <div>
-                    <strong>Account Recovery:</strong> Managed securely via Google OAuth 2.0 &amp; Firebase Authentication.
-                  </div>
-                </div>
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Portal Header & Role Mode Switcher */}
+                {/* Authenticated Header — Admin Dashboard is strictly visible ONLY to Admin (profile.role === 'admin') */}
                 <div className="bg-[#0B192C] text-white p-6 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
                     <div className="text-xs font-mono-tabular text-[#E5C158]">
-                      AUTHENTICATED SESSION · {fbUser.email}
+                      {profile?.role === 'admin'
+                        ? `ADMINISTRATOR PORTAL · ${profile?.email || fbUser?.email}`
+                        : `CUSTOMER INVESTOR PORTAL · ${profile?.email || fbUser?.email}`}
                     </div>
                     <h1 className="text-2xl font-serif-display font-bold mt-1">
-                      {portalMode === 'admin'
+                      {profile?.role === 'admin' && portalMode === 'admin'
                         ? 'Administrator Business Management Console'
-                        : `Welcome back, ${profile?.fullName || fbUser.displayName || 'Investor'}`}
+                        : `Welcome back, ${profile?.fullName || fbUser?.displayName || 'Valued Client'}`}
                     </h1>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    {/* Workspace Role Toggle so evaluator can inspect both Customer Dashboard and Admin Dashboard */}
-                    <div className="flex items-center bg-white/10 p-1 rounded-lg border border-white/15">
-                      <button
-                        type="button"
-                        onClick={() => setPortalMode('customer')}
-                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                          portalMode === 'customer'
-                            ? 'bg-[#C59B27] text-[#0B192C] font-semibold'
-                            : 'text-slate-300 hover:text-white'
-                        }`}
-                      >
-                        Customer Dashboard
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPortalMode('admin')}
-                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                          portalMode === 'admin'
-                            ? 'bg-[#C59B27] text-[#0B192C] font-semibold'
-                            : 'text-slate-300 hover:text-white'
-                        }`}
-                      >
-                        Admin Dashboard
-                      </button>
-                    </div>
+                    {/* Strictly show Admin Dashboard toggle ONLY if authenticated user is an Administrator */}
+                    {profile?.role === 'admin' && (
+                      <div className="flex items-center bg-white/10 p-1 rounded-lg border border-white/15">
+                        <button
+                          type="button"
+                          onClick={() => setPortalMode('customer')}
+                          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                            portalMode === 'customer'
+                              ? 'bg-[#C59B27] text-[#0B192C] font-semibold'
+                              : 'text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          Customer View
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPortalMode('admin')}
+                          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                            portalMode === 'admin'
+                              ? 'bg-[#C59B27] text-[#0B192C] font-semibold'
+                              : 'text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          Admin Dashboard
+                        </button>
+                      </div>
+                    )}
 
                     <button
                       type="button"
@@ -1475,7 +1902,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {portalMode === 'admin' ? (
+                {profile?.role === 'admin' && portalMode === 'admin' ? (
                   <AdminDashboard
                     properties={properties}
                     bookings={bookings}
@@ -1562,7 +1989,7 @@ export default function App() {
               onClick={() => setActivePage('portal')}
               className="hover:text-white transition-colors"
             >
-              Client &amp; Admin Portal
+              Customer Sign In / Sign Up
             </button>
           </div>
         </div>
@@ -1590,7 +2017,7 @@ export default function App() {
       <AiChatbotWidget
         properties={properties}
         authToken={authToken}
-        userEmail={fbUser?.email || ''}
+        userEmail={profile?.email || fbUser?.email || ''}
         userName={profile?.fullName || fbUser?.displayName || ''}
         onLeadCaptured={handleRefreshAll}
       />

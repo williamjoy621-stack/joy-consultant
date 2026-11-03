@@ -8,9 +8,15 @@ import {
   requireAuth,
   optionalAuth,
   AuthRequest,
+  hashPassword,
+  verifyPassword,
+  createCustomerSessionToken,
 } from './src/middleware/auth.ts';
 import {
   getOrCreateUserProfile,
+  registerCustomerAccount,
+  findUserAccountByEmail,
+  resetCustomerPassword,
   updateUserProfile,
   listAllProfiles,
   listProperties,
@@ -58,6 +64,137 @@ async function startServer() {
 
   app.use(express.json({ limit: '5mb' }));
 
+  // Customer Sign Up (Registration stored in PostgreSQL)
+  app.post('/api/auth/register', async (req, res) => {
+    try {
+      const {
+        fullName,
+        email,
+        phone,
+        password,
+        preferredLocation,
+        investmentBudget,
+      } = req.body || {};
+
+      if (!fullName || !email || !phone || !password) {
+        return res.status(400).json({
+          error: 'Please provide your full name, email address, phone number, and password.',
+        });
+      }
+      if (String(password).length < 6) {
+        return res.status(400).json({
+          error: 'Password must be at least 6 characters long.',
+        });
+      }
+
+      const pwdHash = hashPassword(String(password));
+      const profile = await registerCustomerAccount({
+        fullName: String(fullName),
+        email: String(email),
+        phone: String(phone),
+        passwordHash: pwdHash,
+        preferredLocation: preferredLocation ? String(preferredLocation) : 'Ibeju-Lekki, Lagos',
+        investmentBudget: Number(investmentBudget || 15000000),
+      });
+
+      const token = createCustomerSessionToken({
+        uid: profile.uid,
+        email: profile.email,
+        name: profile.fullName,
+      });
+
+      res.status(201).json({
+        token,
+        profile,
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        error: error.message || 'Registration failed. Please try again.',
+      });
+    }
+  });
+
+  // Customer Sign In (Email & Password verified against PostgreSQL)
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+      if (!email || !password) {
+        return res.status(400).json({
+          error: 'Please enter both your email address and password.',
+        });
+      }
+
+      const account = await findUserAccountByEmail(String(email));
+      if (!account || !account.user.passwordHash) {
+        return res.status(401).json({
+          error: 'Invalid email or password. If you are a new customer, please use the Sign Up tab to create an account.',
+        });
+      }
+
+      const valid = verifyPassword(String(password), account.user.passwordHash);
+      if (!valid) {
+        return res.status(401).json({
+          error: 'Incorrect password. Please try again or use Forgot Password.',
+        });
+      }
+
+      const token = createCustomerSessionToken({
+        uid: account.profile.uid,
+        email: account.profile.email,
+        name: account.profile.fullName,
+      });
+
+      res.json({
+        token,
+        profile: account.profile,
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        error: error.message || 'Unable to sign in right now.',
+      });
+    }
+  });
+
+  // Customer Password Recovery / Reset
+  app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+      const { email, phone, newPassword } = req.body || {};
+      if (!email || !newPassword) {
+        return res.status(400).json({
+          error: 'Please provide your registered email address and a new password.',
+        });
+      }
+      if (String(newPassword).length < 6) {
+        return res.status(400).json({
+          error: 'New password must be at least 6 characters long.',
+        });
+      }
+
+      const pwdHash = hashPassword(String(newPassword));
+      const profile = await resetCustomerPassword({
+        email: String(email),
+        phone: String(phone || ''),
+        newPasswordHash: pwdHash,
+      });
+
+      const token = createCustomerSessionToken({
+        uid: profile.uid,
+        email: profile.email,
+        name: profile.fullName,
+      });
+
+      res.json({
+        token,
+        profile,
+        message: 'Your password has been updated and you are now signed in.',
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        error: error.message || 'Could not reset password.',
+      });
+    }
+  });
+
   // Public bootstrap data (actual properties and consultancy services from PostgreSQL)
   app.get('/api/bootstrap', optionalAuth, async (req: AuthRequest, res) => {
     try {
@@ -92,13 +229,13 @@ async function startServer() {
     }
   });
 
-  // Authenticated Dashboard Data (Customer & Admin)
+  // Authenticated Dashboard Data (Strict RBAC: Customers only receive their own records; only Admin receives admin records)
   app.get('/api/dashboard', requireAuth, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const email = req.user!.email || '';
       const profile = await getOrCreateUserProfile(uid, email, req.user!.name || '');
-      const isAdmin = profile.role === 'admin' || req.query.viewMode === 'admin';
+      const isAdmin = profile.role === 'admin';
 
       const [
         bookingsData,
@@ -140,10 +277,11 @@ async function startServer() {
     }
   });
 
-  // Update User Profile or Role
+  // Update User Profile (Customers cannot escalate their own role)
   app.put('/api/profile', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const updated = await updateUserProfile(req.user!.uid, req.body);
+      const { role: _ignoredRole, ...safeUpdates } = req.body || {};
+      const updated = await updateUserProfile(req.user!.uid, safeUpdates);
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message || 'Failed to update profile' });

@@ -26,7 +26,7 @@ export async function getOrCreateUserProfile(
 ) {
   try {
     const cleanEmail = (email || '').trim().toLowerCase();
-    const defaultRole = ADMIN_EMAILS.includes(cleanEmail) ? 'admin' : 'customer';
+    const assignedRole = ADMIN_EMAILS.includes(cleanEmail) ? 'admin' : 'customer';
     const fullName = displayName || cleanEmail.split('@')[0] || 'Valued Client';
 
     await db
@@ -35,11 +35,11 @@ export async function getOrCreateUserProfile(
         uid,
         email: cleanEmail,
         fullName,
-        role: defaultRole,
+        role: assignedRole,
       })
       .onConflictDoUpdate({
         target: users.uid,
-        set: { email: cleanEmail },
+        set: { email: cleanEmail, role: assignedRole },
       });
 
     const existingProfiles = await db
@@ -48,7 +48,16 @@ export async function getOrCreateUserProfile(
       .where(eq(profiles.uid, uid));
 
     if (existingProfiles.length > 0) {
-      return existingProfiles[0];
+      const current = existingProfiles[0];
+      if (current.role !== assignedRole) {
+        const updatedRole = await db
+          .update(profiles)
+          .set({ role: assignedRole, updatedAt: new Date() })
+          .where(eq(profiles.uid, uid))
+          .returning();
+        return updatedRole[0];
+      }
+      return current;
     }
 
     const inserted = await db
@@ -57,7 +66,7 @@ export async function getOrCreateUserProfile(
         uid,
         email: cleanEmail,
         fullName,
-        role: defaultRole,
+        role: assignedRole,
         phone: '+2348144833743',
         address: 'Victoria Island',
         city: 'Lagos',
@@ -67,7 +76,7 @@ export async function getOrCreateUserProfile(
       })
       .onConflictDoUpdate({
         target: profiles.uid,
-        set: { updatedAt: new Date() },
+        set: { role: assignedRole, updatedAt: new Date() },
       })
       .returning();
 
@@ -76,6 +85,142 @@ export async function getOrCreateUserProfile(
     console.error('Database query failed in getOrCreateUserProfile:', error);
     throw new Error('Failed to synchronize user profile.', { cause: error });
   }
+}
+
+export async function registerCustomerAccount(input: {
+  fullName: string;
+  email: string;
+  phone: string;
+  passwordHash: string;
+  preferredLocation?: string;
+  investmentBudget?: number;
+}) {
+  const cleanEmail = input.email.trim().toLowerCase();
+  const existingUsers = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, cleanEmail));
+
+  if (existingUsers.length > 0 && existingUsers[0].passwordHash) {
+    throw new Error('An account with this email address already exists. Please sign in.');
+  }
+
+  const assignedRole = ADMIN_EMAILS.includes(cleanEmail) ? 'admin' : 'customer';
+  const uid = existingUsers[0]?.uid || `jc-cust-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  await db
+    .insert(users)
+    .values({
+      uid,
+      email: cleanEmail,
+      fullName: input.fullName.trim(),
+      phone: input.phone.trim(),
+      passwordHash: input.passwordHash,
+      role: assignedRole,
+    })
+    .onConflictDoUpdate({
+      target: users.uid,
+      set: {
+        fullName: input.fullName.trim(),
+        phone: input.phone.trim(),
+        passwordHash: input.passwordHash,
+        role: assignedRole,
+      },
+    });
+
+  const insertedProfile = await db
+    .insert(profiles)
+    .values({
+      uid,
+      email: cleanEmail,
+      fullName: input.fullName.trim(),
+      phone: input.phone.trim(),
+      address: 'Lagos',
+      city: 'Lagos',
+      state: 'Lagos State',
+      role: assignedRole,
+      preferredLocation: input.preferredLocation || 'Ibeju-Lekki, Lagos',
+      investmentBudget: Number(input.investmentBudget || 15000000),
+    })
+    .onConflictDoUpdate({
+      target: profiles.uid,
+      set: {
+        fullName: input.fullName.trim(),
+        phone: input.phone.trim(),
+        role: assignedRole,
+        preferredLocation: input.preferredLocation || 'Ibeju-Lekki, Lagos',
+        investmentBudget: Number(input.investmentBudget || 15000000),
+        updatedAt: new Date(),
+      },
+    })
+    .returning();
+
+  await db.insert(notifications).values({
+    userUid: uid,
+    title: 'Welcome to JOY CONSULTANT Client Portal',
+    body: `Hello ${input.fullName.trim()}, your verified investor account is active. You can now book physical or virtual inspections, place land purchase orders, and track title documentation.`,
+    category: 'Account',
+  });
+
+  await db.insert(auditLogs).values({
+    actorUid: uid,
+    actorEmail: cleanEmail,
+    action: 'CUSTOMER_ACCOUNT_REGISTERED',
+    entityType: 'user',
+    entityId: uid,
+    details: `Registered customer account for ${input.fullName.trim()} (${cleanEmail})`,
+  });
+
+  return insertedProfile[0];
+}
+
+export async function findUserAccountByEmail(email: string) {
+  const cleanEmail = email.trim().toLowerCase();
+  const matchedUsers = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, cleanEmail));
+
+  if (matchedUsers.length === 0) return null;
+  const userRow = matchedUsers[0];
+  const profileRow = await getOrCreateUserProfile(
+    userRow.uid,
+    cleanEmail,
+    userRow.fullName || undefined
+  );
+  return {
+    user: userRow,
+    profile: profileRow,
+  };
+}
+
+export async function resetCustomerPassword(input: {
+  email: string;
+  phone: string;
+  newPasswordHash: string;
+}) {
+  const cleanEmail = input.email.trim().toLowerCase();
+  const matchedUsers = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, cleanEmail));
+
+  if (matchedUsers.length === 0) {
+    throw new Error('No account found with that email address.');
+  }
+
+  const userRow = matchedUsers[0];
+  await db
+    .update(users)
+    .set({ passwordHash: input.newPasswordHash })
+    .where(eq(users.uid, userRow.uid));
+
+  const profileRow = await getOrCreateUserProfile(
+    userRow.uid,
+    cleanEmail,
+    userRow.fullName || undefined
+  );
+  return profileRow;
 }
 
 export async function updateUserProfile(
