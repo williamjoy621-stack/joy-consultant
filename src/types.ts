@@ -168,3 +168,19 @@ export interface AiRecommendationResult {
   dueDiligenceChecklist: string[];
   complianceDisclaimer: string;
 }
+
+export interface ReviewItem {
+  id: number;
+  userUid: string | null;
+  reviewerName: string;
+  reviewerRole: string;
+  reviewerEmail: string;
+  location: string;
+  propertyTitle: string;
+  rating: number;
+  comment: string;
+  verifiedPurchase: boolean;
+  status: string;
+  createdAt: string;
+}
+

@@ -45,6 +45,8 @@ import {
   markNotificationAsRead,
   listAuditLogs,
   logChatbotExchange,
+  listReviews,
+  createReviewRecord,
 } from './src/db/repository.ts';
 
 dotenv.config();
@@ -195,12 +197,13 @@ async function startServer() {
     }
   });
 
-  // Public bootstrap data (actual properties and consultancy services from PostgreSQL)
+  // Public bootstrap data (actual properties, consultancy services, and verified customer reviews from PostgreSQL)
   app.get('/api/bootstrap', optionalAuth, async (req: AuthRequest, res) => {
     try {
-      const [propertiesData, servicesData] = await Promise.all([
+      const [propertiesData, servicesData, reviewsData] = await Promise.all([
         listProperties(),
         listServices(),
+        listReviews(),
       ]);
 
       let profile = null;
@@ -219,6 +222,7 @@ async function startServer() {
       res.json({
         properties: propertiesData,
         services: servicesData,
+        reviews: reviewsData,
         profile,
         favourites: userFavourites,
         paystackConfigured: Boolean(process.env.PAYSTACK_SECRET_KEY),
@@ -226,6 +230,53 @@ async function startServer() {
     } catch (error: any) {
       console.error('Bootstrap error:', error);
       res.status(500).json({ error: error.message || 'Failed to load platform data' });
+    }
+  });
+
+  // Public & Authenticated Customer Reviews Endpoints
+  app.get('/api/reviews', async (_req, res) => {
+    try {
+      const reviewsData = await listReviews();
+      res.json(reviewsData);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to load reviews' });
+    }
+  });
+
+  app.post('/api/reviews', optionalAuth, async (req: AuthRequest, res) => {
+    try {
+      const {
+        reviewerName,
+        reviewerRole,
+        reviewerEmail,
+        location,
+        propertyTitle,
+        rating,
+        comment,
+      } = req.body || {};
+
+      if (!reviewerName || !comment) {
+        return res.status(400).json({
+          error: 'Please enter your name and review comment.',
+        });
+      }
+
+      const created = await createReviewRecord({
+        userUid: req.user?.uid || null,
+        reviewerName: String(reviewerName),
+        reviewerRole: reviewerRole ? String(reviewerRole) : 'Verified Land Investor',
+        reviewerEmail: reviewerEmail ? String(reviewerEmail) : req.user?.email || '',
+        location: location ? String(location) : 'Lagos, Nigeria',
+        propertyTitle: propertyTitle
+          ? String(propertyTitle)
+          : 'General Consultancy & Verification',
+        rating: Number(rating || 5),
+        comment: String(comment),
+      });
+
+      res.status(201).json(created);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || 'Failed to submit review' });
     }
   });
 
@@ -247,6 +298,7 @@ async function startServer() {
         leadsData,
         customersData,
         auditLogsData,
+        reviewsData,
       ] = await Promise.all([
         listBookings(uid, isAdmin),
         listOrders(uid, isAdmin),
@@ -257,6 +309,7 @@ async function startServer() {
         isAdmin ? listLeads() : Promise.resolve([]),
         isAdmin ? listAllProfiles() : Promise.resolve([]),
         isAdmin ? listAuditLogs() : Promise.resolve([]),
+        listReviews(),
       ]);
 
       res.json({
@@ -269,7 +322,9 @@ async function startServer() {
         favourites: favouritesData.map((f) => f.propertyId),
         leads: leadsData,
         customers: customersData,
+        registeredMembersCount: customersData.length,
         auditLogs: auditLogsData,
+        reviews: reviewsData,
       });
     } catch (error: any) {
       console.error('Dashboard fetch error:', error);
@@ -1020,6 +1075,7 @@ Recommend suitable properties strictly from the Actual Platform Database Listing
         paymentsData,
         leadsData,
         messagesData,
+        customersData,
       ] = await Promise.all([
         listProperties(),
         listBookings(undefined, true),
@@ -1027,6 +1083,7 @@ Recommend suitable properties strictly from the Actual Platform Database Listing
         listPayments(undefined, true),
         listLeads(),
         listMessages(undefined, true),
+        listAllProfiles(),
       ]);
 
       const totalRevenueNgn = paymentsData.reduce(
@@ -1040,6 +1097,7 @@ Recommend suitable properties strictly from the Actual Platform Database Listing
 
       const dbSnapshot = {
         metrics: {
+          totalRegisteredMembers: customersData.length,
           totalProperties: propertiesData.length,
           totalBookings: bookingsData.length,
           totalOrders: ordersData.length,

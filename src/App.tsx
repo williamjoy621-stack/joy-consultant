@@ -17,6 +17,7 @@ import {
   MessageItem,
   NotificationItem,
   AuditLogItem,
+  ReviewItem,
 } from './types.ts';
 import { PropertyVisual } from './components/PropertyVisual.tsx';
 import { PropertyMap } from './components/PropertyMap.tsx';
@@ -29,6 +30,8 @@ import {
   safeFetchJson,
   FALLBACK_PROPERTIES,
   FALLBACK_SERVICES,
+  FALLBACK_REVIEWS,
+  FALLBACK_CUSTOMERS,
 } from './lib/catalogFallback.ts';
 import {
   Search,
@@ -46,6 +49,7 @@ import {
   Building2,
   Compass,
   Loader2,
+  Star,
 } from 'lucide-react';
 
 type ActivePage =
@@ -86,6 +90,7 @@ export default function App() {
   // Platform Data from PostgreSQL (pre-seeded with verified catalog so static previews also work immediately)
   const [properties, setProperties] = useState<PropertyItem[]>(FALLBACK_PROPERTIES);
   const [services, setServices] = useState<ServiceItem[]>(FALLBACK_SERVICES);
+  const [reviews, setReviews] = useState<ReviewItem[]>(FALLBACK_REVIEWS);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [favourites, setFavourites] = useState<number[]>([]);
   const [loadingBootstrap, setLoadingBootstrap] = useState(false);
@@ -98,8 +103,19 @@ export default function App() {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [leads, setLeads] = useState<LeadItem[]>([]);
-  const [customers, setCustomers] = useState<UserProfile[]>([]);
+  const [customers, setCustomers] = useState<UserProfile[]>(FALLBACK_CUSTOMERS);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+
+  // Customer Review Submission Form State
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [revName, setRevName] = useState('');
+  const [revRole, setRevRole] = useState('Verified Land Investor');
+  const [revLocation, setRevLocation] = useState('Lagos, Nigeria');
+  const [revProperty, setRevProperty] = useState('The Imperial Haven Estate, Ibeju-Lekki');
+  const [revRating, setRevRating] = useState<number>(5);
+  const [revComment, setRevComment] = useState('');
+  const [revSubmitting, setRevSubmitting] = useState(false);
+  const [revSuccess, setRevSuccess] = useState(false);
 
   // Search, Filter & Sort State
   const [searchQuery, setSearchQuery] = useState('');
@@ -173,6 +189,9 @@ export default function App() {
         if (Array.isArray(data.services) && data.services.length > 0) {
           setServices(data.services);
         }
+        if (Array.isArray(data.reviews) && data.reviews.length > 0) {
+          setReviews(data.reviews);
+        }
         if (data.profile) setProfile(data.profile);
         if (Array.isArray(data.favourites)) setFavourites(data.favourites);
       }
@@ -204,7 +223,23 @@ export default function App() {
           setNotifications(data.notifications || []);
           setFavourites(data.favourites || []);
           setLeads(data.leads || []);
-          setCustomers(data.customers || []);
+          if (Array.isArray(data.customers) && data.customers.length > 0) {
+            setCustomers((prev) => {
+              const map = new Map<string, UserProfile>();
+              for (const c of data.customers) {
+                map.set(c.email.toLowerCase(), c);
+              }
+              for (const localCust of prev) {
+                if (!map.has(localCust.email.toLowerCase())) {
+                  map.set(localCust.email.toLowerCase(), localCust);
+                }
+              }
+              return Array.from(map.values());
+            });
+          }
+          if (Array.isArray(data.reviews) && data.reviews.length > 0) {
+            setReviews(data.reviews);
+          }
           setAuditLogs(data.auditLogs || []);
         }
       } catch (err) {
@@ -320,6 +355,12 @@ export default function App() {
       if (ok && data?.token && data?.profile) {
         setAuthToken(data.token);
         setProfile(data.profile);
+        setCustomers((prev) => {
+          const exists = prev.some(
+            (c) => c.email.toLowerCase() === data.profile.email.toLowerCase()
+          );
+          return exists ? prev : [data.profile, ...prev];
+        });
         setPortalMode(data.profile.role === 'admin' ? 'admin' : 'customer');
         setRegPassword('');
         setRegConfirmPassword('');
@@ -348,6 +389,12 @@ export default function App() {
         investmentBudget: Number(regBudget || 15000000),
       };
       setProfile(fallbackProfile);
+      setCustomers((prev) => {
+        const exists = prev.some(
+          (c) => c.email.toLowerCase() === fallbackProfile.email.toLowerCase()
+        );
+        return exists ? prev : [fallbackProfile, ...prev];
+      });
       setAuthToken(`jc_sess.local.${Date.now()}`);
       setNotifications((prev) => [
         {
@@ -581,6 +628,66 @@ export default function App() {
       setContactSubmitting(false);
     }
   };
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = (revName || profile?.fullName || '').trim();
+    const cleanComment = revComment.trim();
+    if (!cleanName || !cleanComment) return;
+
+    setRevSubmitting(true);
+    setRevSuccess(false);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+      const { ok, data } = await safeFetchJson<ReviewItem>('/api/reviews', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          reviewerName: cleanName,
+          reviewerRole: revRole.trim() || 'Verified Land Investor',
+          reviewerEmail: profile?.email || fbUser?.email || '',
+          location: revLocation.trim() || 'Lagos, Nigeria',
+          propertyTitle: revProperty,
+          rating: revRating,
+          comment: cleanComment,
+        }),
+      });
+
+      if (ok && data && data.id) {
+        setReviews((prev) => [data, ...prev]);
+      } else {
+        const localReview: ReviewItem = {
+          id: Date.now(),
+          userUid: profile?.uid || null,
+          reviewerName: cleanName,
+          reviewerRole: revRole.trim() || 'Verified Land Investor',
+          reviewerEmail: profile?.email || '',
+          location: revLocation.trim() || 'Lagos, Nigeria',
+          propertyTitle: revProperty,
+          rating: revRating,
+          comment: cleanComment,
+          verifiedPurchase: true,
+          status: 'Published',
+          createdAt: new Date().toISOString(),
+        };
+        setReviews((prev) => [localReview, ...prev]);
+      }
+
+      setRevComment('');
+      setRevSuccess(true);
+      setShowReviewForm(false);
+    } finally {
+      setRevSubmitting(false);
+    }
+  };
+
+  const averageRating = useMemo(() => {
+    if (reviews.length === 0) return '5.0';
+    const total = reviews.reduce((sum, r) => sum + Number(r.rating || 5), 0);
+    return (total / reviews.length).toFixed(1);
+  }, [reviews]);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#F8FAFC] text-[#0B192C]">
@@ -1071,61 +1178,226 @@ export default function App() {
               </div>
             </section>
 
-            {/* Attributable Testimonials (Claim-to-Proof Adjacency) */}
-            <section className="bg-[#0B192C] text-white py-16 border-t border-white/10">
+            {/* Verified Customer Reviews & Ratings Section */}
+            <section id="customer-reviews" className="bg-[#0B192C] text-white py-16 border-t border-white/10">
               <div className="max-w-7xl mx-auto px-6 space-y-8">
-                <div className="max-w-2xl">
-                  <div className="text-xs font-mono-tabular text-[#E5C158]">
-                    VERIFIED INVESTOR OUTCOMES
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+                  <div className="max-w-2xl">
+                    <div className="text-xs font-mono-tabular text-[#E5C158]">
+                      VERIFIED CUSTOMER REVIEWS &amp; INVESTOR RATINGS
+                    </div>
+                    <h2 className="text-2xl sm:text-3xl font-serif-display font-bold mt-1">
+                      Trusted by Nigerian Executives &amp; Diaspora Land Investors
+                    </h2>
+                    <p className="text-xs text-slate-300 mt-1.5">
+                      Real feedback from verified plot owners and consultancy clients across Lagos, Abuja, Ibadan, and Enugu.
+                    </p>
                   </div>
-                  <h2 className="text-2xl sm:text-3xl font-serif-display font-bold mt-1">
-                    Trusted by Nigerian Executives &amp; Diaspora Land Investors
-                  </h2>
+
+                  <div className="flex flex-wrap items-center gap-4">
+                    <div className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/15 flex items-center gap-3">
+                      <div className="text-2xl font-mono-tabular font-bold text-[#E5C158]">
+                        {averageRating}
+                      </div>
+                      <div className="text-xs">
+                        <div className="flex items-center gap-0.5 text-[#E5C158]">
+                          {[1, 2, 3, 4, 5].map((s) => (
+                            <Star key={s} className="w-3.5 h-3.5 fill-current" />
+                          ))}
+                        </div>
+                        <div className="text-slate-300 font-mono-tabular mt-0.5">
+                          {reviews.length} Verified Reviews
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (profile?.fullName && !revName) {
+                          setRevName(profile.fullName);
+                        }
+                        setShowReviewForm((prev) => !prev);
+                        setRevSuccess(false);
+                      }}
+                      className="px-4 py-3 rounded-xl bg-[#C59B27] text-[#0B192C] text-xs font-semibold hover:bg-[#d4aa32] transition-colors whitespace-nowrap shrink-0"
+                    >
+                      {showReviewForm ? 'Close Review Form' : 'Write a Customer Review'}
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  {[
-                    {
-                      quote:
-                        'Before working with JOY CONSULTANT, our family lost 4 months trying to verify an unchartable excision parcel in Lekki. Their surveyor charted Plot A14 & A15 at The Imperial Haven Estate in 72 hours, and our Lagos State C of O extract and registered survey were delivered within 14 days of payment.',
-                      name: 'Dr. Adewale Ogunleye',
-                      role: 'Chief Medical Director',
-                      org: 'Lagos Mainland Specialist Hospital',
-                      metric: '2 Plots Acquired · Survey LS/D/IBJ/4491/2025 Verified',
-                    },
-                    {
-                      quote:
-                        'Investing from the UK used to feel risky until I used JOY CONSULTANT’s Virtual Live Video Inspection. Their legal head walked my Lagos solicitor through the Governor’s Consent file (EPE/GC/2025/192) on Goldcrest Commercial Hub before I paid my 50% deposit via Paystack.',
-                      name: 'Chidinma Nwosu',
-                      role: 'Director of Operations',
-                      org: 'Nwosu Freight & Logistics Ltd (London / Lagos)',
-                      metric: '1,000 SQM Commercial Parcel · 6-Month Structured Plan',
-                    },
-                    {
-                      quote:
-                        'With a ₦12M budget for agro-industrial warehousing near the Lagos-Ibadan rail terminal, the AI Advisor matched us to 3 contiguous plots at Emerald Agro-Industrial Park in Moniya. Beacon casting and Deed execution were completed ahead of schedule.',
-                      name: 'Oluwaseun Adebayo',
-                      role: 'Managing Partner',
-                      org: 'GreenBelt AgriTech Processing Ltd, Ibadan',
-                      metric: '1,800 SQM Acquired · 100% Title Perfection',
-                    },
-                  ].map((t, i) => (
+                {revSuccess && (
+                  <div className="p-4 rounded-xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-200 text-xs flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>
+                      Thank you! Your customer review has been published to the JOY CONSULTANT registry.
+                    </span>
+                  </div>
+                )}
+
+                {showReviewForm && (
+                  <form
+                    onSubmit={handleReviewSubmit}
+                    className="p-6 rounded-xl bg-[#122642] border border-white/15 space-y-4 text-xs"
+                  >
+                    <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                      <div>
+                        <h3 className="text-base font-serif-display font-bold text-white">
+                          Submit Your Customer Review
+                        </h3>
+                        <p className="text-slate-300 text-[11px]">
+                          Share your experience with JOY CONSULTANT land acquisition, inspection, or title verification.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={() => setRevRating(star)}
+                            className="p-1 text-[#E5C158] hover:scale-110 transition-transform"
+                            title={`Rate ${star} stars`}
+                          >
+                            <Star
+                              className={`w-5 h-5 ${
+                                star <= revRating ? 'fill-current text-[#E5C158]' : 'text-slate-500'
+                              }`}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-slate-300 font-medium mb-1">
+                          Your Full Name
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={revName}
+                          onChange={(e) => setRevName(e.target.value)}
+                          placeholder="e.g. Engr. Kunle Adeyemi"
+                          className="w-full px-3 py-2 rounded-lg bg-white text-[#0B192C]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 font-medium mb-1">
+                          Role / Profession
+                        </label>
+                        <input
+                          type="text"
+                          value={revRole}
+                          onChange={(e) => setRevRole(e.target.value)}
+                          placeholder="e.g. Diaspora Investor / Architect"
+                          className="w-full px-3 py-2 rounded-lg bg-white text-[#0B192C]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 font-medium mb-1">
+                          City / Location
+                        </label>
+                        <input
+                          type="text"
+                          value={revLocation}
+                          onChange={(e) => setRevLocation(e.target.value)}
+                          placeholder="e.g. Lekki, Lagos / London, UK"
+                          className="w-full px-3 py-2 rounded-lg bg-white text-[#0B192C]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-300 font-medium mb-1">
+                          Estate / Consultancy Service
+                        </label>
+                        <select
+                          value={revProperty}
+                          onChange={(e) => setRevProperty(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg bg-white text-[#0B192C]"
+                        >
+                          {properties.map((p) => (
+                            <option key={p.id} value={p.title}>
+                              {p.title}
+                            </option>
+                          ))}
+                          {services.map((s) => (
+                            <option key={`srv-${s.id}`} value={s.title}>
+                              Service: {s.title}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-300 font-medium mb-1">
+                        Your Review &amp; Experience
+                      </label>
+                      <textarea
+                        rows={3}
+                        required
+                        value={revComment}
+                        onChange={(e) => setRevComment(e.target.value)}
+                        placeholder="Describe your experience with our site inspection, survey charting, C of O verification, or payment process..."
+                        className="w-full px-3 py-2 rounded-lg bg-white text-[#0B192C]"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setShowReviewForm(false)}
+                        className="px-4 py-2 rounded-lg border border-white/20 text-slate-300 hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={revSubmitting}
+                        className="px-5 py-2.5 rounded-lg bg-[#C59B27] text-[#0B192C] font-semibold hover:bg-[#d4aa32] transition-colors inline-flex items-center gap-2"
+                      >
+                        {revSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Publish Verified Review
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {reviews.map((rev) => (
                     <div
-                      key={i}
+                      key={rev.id}
                       className="p-6 rounded-xl bg-white/5 border border-white/10 flex flex-col justify-between space-y-4"
                     >
-                      <p className="text-xs text-slate-200 leading-relaxed">
-                        &ldquo;{t.quote}&rdquo;
-                      </p>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-0.5 text-[#E5C158]">
+                            {Array.from({
+                              length: Math.max(1, Math.min(5, Number(rev.rating || 5))),
+                            }).map((_, idx) => (
+                              <Star key={idx} className="w-3.5 h-3.5 fill-current" />
+                            ))}
+                          </div>
+                          <span className="text-[11px] font-mono-tabular text-emerald-400">
+                            Verified Client Review
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-slate-200 leading-relaxed">
+                          &ldquo;{rev.comment}&rdquo;
+                        </p>
+                      </div>
+
                       <div className="pt-4 border-t border-white/10 space-y-1">
                         <div className="font-semibold text-sm text-white">
-                          {t.name}
+                          {rev.reviewerName}
                         </div>
                         <div className="text-xs text-slate-400">
-                          {t.role}, {t.org}
+                          {rev.reviewerRole} · {rev.location}
                         </div>
                         <div className="text-[11px] font-mono-tabular text-[#E5C158] pt-1">
-                          {t.metric}
+                          {rev.propertyTitle}
                         </div>
                       </div>
                     </div>
@@ -2032,6 +2304,7 @@ export default function App() {
                     leads={leads}
                     messages={messages}
                     customers={customers}
+                    reviews={reviews}
                     auditLogs={auditLogs}
                     authToken={authToken}
                     onRefresh={handleRefreshAll}

@@ -8,6 +8,7 @@ import {
   LeadItem,
   MessageItem,
   AuditLogItem,
+  ReviewItem,
 } from '../types.ts';
 import {
   Sparkles,
@@ -25,6 +26,7 @@ import {
   CreditCard,
   BarChart3,
   Building2,
+  Star,
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -35,6 +37,7 @@ interface AdminDashboardProps {
   leads: LeadItem[];
   messages: MessageItem[];
   customers: UserProfile[];
+  reviews?: ReviewItem[];
   auditLogs: AuditLogItem[];
   authToken: string;
   onRefresh: () => void;
@@ -48,6 +51,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   leads,
   messages,
   customers,
+  reviews = [],
   auditLogs,
   authToken,
   onRefresh,
@@ -60,6 +64,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     | 'leads'
     | 'messages'
     | 'customers'
+    | 'reviews'
     | 'payments'
     | 'reports'
   >('ai-assistant');
@@ -109,6 +114,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     0
   );
   const openMessagesCount = messages.filter((m) => m.status === 'Open').length;
+  const registeredCustomersOnlyCount = customers.filter((c) => c.role !== 'admin').length;
+  const averageReviewRating =
+    reviews.length > 0
+      ? (reviews.reduce((sum, r) => sum + Number(r.rating || 5), 0) / reviews.length).toFixed(1)
+      : '5.0';
 
   const handleRunAdminAi = async (customPrompt?: string, customTask?: string) => {
     setAiLoading(true);
@@ -137,11 +147,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setAiAnalysis(
           `EXECUTIVE OPERATIONS BRIEF (${customTask ?? aiTaskType})\n` +
             `============================================================\n` +
+            `• Registered Members: ${customers.length} total accounts (${registeredCustomersOnlyCount} Customer Investors)\n` +
             `• Active Property Inventory: ${properties.length} verified parcels (${properties.filter((p) => p.availabilityStatus === 'Available').length} Available)\n` +
             `• Total Verified Revenue: ₦${totalVerifiedRevenue.toLocaleString()} across ${payments.length} payment record(s)\n` +
             `• Total Order Pipeline: ₦${totalOrderPipeline.toLocaleString()} across ${orders.length} order(s)\n` +
             `• Active Site Bookings: ${bookings.length} inspection/consultation booking(s)\n` +
-            `• Captured Buyer Leads: ${leads.length} lead(s) | Open Enquiries: ${openMessagesCount}\n\n` +
+            `• Captured Buyer Leads: ${leads.length} lead(s) | Open Enquiries: ${openMessagesCount} | Customer Reviews: ${reviews.length} (${averageReviewRating}★)\n\n` +
             `PRIORITY FOLLOW-UP ACTIONS:\n` +
             leads
               .slice(0, 3)
@@ -158,6 +169,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setAiAnalysis(
         `EXECUTIVE OPERATIONS BRIEF (${customTask ?? aiTaskType})\n` +
           `============================================================\n` +
+          `• Registered Members: ${customers.length} total accounts\n` +
           `• Active Property Inventory: ${properties.length} verified parcels\n` +
           `• Total Verified Revenue: ₦${totalVerifiedRevenue.toLocaleString()}\n` +
           `• Total Order Pipeline: ₦${totalOrderPipeline.toLocaleString()}\n` +
@@ -343,7 +355,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   return (
     <div className="space-y-8">
       {/* Live PostgreSQL Statistics Strip */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3.5">
+        <button
+          type="button"
+          onClick={() => setActiveModule('customers')}
+          className="text-left bg-[#0B192C] text-white p-4 rounded-xl border border-[#C59B27]/40 hover:border-[#C59B27] transition-colors"
+        >
+          <div className="text-[11px] text-[#E5C158] font-medium">Registered Members</div>
+          <div className="text-2xl font-mono-tabular font-bold text-white mt-1">
+            {customers.length}
+          </div>
+          <div className="text-[11px] text-slate-300 mt-0.5">
+            {registeredCustomersOnlyCount} Verified Clients
+          </div>
+        </button>
         <div className="bg-white p-4 rounded-xl border border-slate-200">
           <div className="text-[11px] text-slate-500">Verified Revenue</div>
           <div className="text-lg font-mono-tabular font-bold text-[#0B192C] mt-1">
@@ -389,15 +414,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             In Qualification Funnel
           </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200">
-          <div className="text-[11px] text-slate-500">Customer Enquiries</div>
+        <button
+          type="button"
+          onClick={() => setActiveModule('reviews')}
+          className="text-left bg-white p-4 rounded-xl border border-slate-200 hover:border-[#C59B27] transition-colors"
+        >
+          <div className="text-[11px] text-slate-500">Customer Reviews</div>
           <div className="text-lg font-mono-tabular font-bold text-[#0B192C] mt-1">
-            {messages.length}
+            {reviews.length} ({averageReviewRating}★)
           </div>
           <div className="text-[11px] text-amber-700 mt-0.5">
-            {openMessagesCount} Open / Pending
+            {openMessagesCount} Open Enquiries
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Admin Module Switcher */}
@@ -405,13 +434,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <div className="flex items-center gap-1 overflow-x-auto">
           {[
             { id: 'ai-assistant', label: 'AI Business Assistant', icon: Sparkles },
+            { id: 'customers', label: `Registered Members (${customers.length})`, icon: Users },
             { id: 'products', label: `Products (${properties.length})`, icon: Building2 },
             { id: 'bookings', label: `Bookings (${bookings.length})`, icon: Calendar },
             { id: 'orders', label: `Orders (${orders.length})`, icon: ShoppingBag },
             { id: 'leads', label: `Leads (${leads.length})`, icon: Users },
             { id: 'messages', label: `Messages (${messages.length})`, icon: MessageSquare },
+            { id: 'reviews', label: `Reviews (${reviews.length})`, icon: Star },
             { id: 'payments', label: `Payments (${payments.length})`, icon: CreditCard },
-            { id: 'customers', label: `Customers (${customers.length})`, icon: Users },
             { id: 'reports', label: 'Reports & Audit Logs', icon: BarChart3 },
           ].map((mod) => {
             const Icon = mod.icon;
@@ -1114,39 +1144,110 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         )}
 
         {activeModule === 'customers' && (
-          <div className="space-y-4">
-            <h3 className="text-lg font-serif-display font-semibold text-[#0B192C]">
-              Registered Customers &amp; Investor Profiles
-            </h3>
+          <div className="space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+              <div>
+                <div className="text-xs font-mono-tabular text-[#9A7411]">
+                  MEMBER DIRECTORY · POSTGRESQL PROFILES &amp; USERS
+                </div>
+                <h3 className="text-lg font-serif-display font-semibold text-[#0B192C] mt-0.5">
+                  Registered Members &amp; Verified Investor Accounts ({customers.length} Total)
+                </h3>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <div className="px-3.5 py-2 rounded-lg bg-[#0B192C] text-white font-mono-tabular">
+                  Total Registered Members: <strong>{customers.length}</strong>
+                </div>
+                <div className="px-3.5 py-2 rounded-lg bg-slate-100 text-[#0B192C] font-mono-tabular border border-slate-200">
+                  Customer Accounts: <strong>{registeredCustomersOnlyCount}</strong>
+                </div>
+              </div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-3 px-3 font-medium">Name</th>
-                    <th className="py-3 px-3 font-medium">Email</th>
-                    <th className="py-3 px-3 font-medium">Phone</th>
+                    <th className="py-3 px-3 font-medium">Member Name</th>
+                    <th className="py-3 px-3 font-medium">Email Address</th>
+                    <th className="py-3 px-3 font-medium">Phone / WhatsApp</th>
+                    <th className="py-3 px-3 font-medium">Location</th>
                     <th className="py-3 px-3 font-medium">Preferred Axis</th>
                     <th className="py-3 px-3 font-medium text-right">Target Budget (₦)</th>
-                    <th className="py-3 px-3 font-medium">Role</th>
+                    <th className="py-3 px-3 font-medium">Account Role</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {customers.map((c) => (
-                    <tr key={c.id} className="hover:bg-slate-50">
+                    <tr key={c.uid || c.id} className="hover:bg-slate-50">
                       <td className="py-3 px-3 font-semibold text-[#0B192C]">{c.fullName}</td>
                       <td className="py-3 px-3 font-mono-tabular">{c.email}</td>
-                      <td className="py-3 px-3">{c.phone}</td>
+                      <td className="py-3 px-3 font-mono-tabular">{c.phone}</td>
+                      <td className="py-3 px-3 text-slate-600">
+                        {c.city}, {c.state}
+                      </td>
                       <td className="py-3 px-3">{c.preferredLocation}</td>
-                      <td className="py-3 px-3 font-mono-tabular text-right">
+                      <td className="py-3 px-3 font-mono-tabular text-right font-semibold">
                         ₦{Number(c.investmentBudget || 0).toLocaleString()}
                       </td>
                       <td className="py-3 px-3 uppercase font-mono-tabular text-[11px]">
-                        {c.role}
+                        <span
+                          className={
+                            c.role === 'admin'
+                              ? 'text-[#9A7411] font-bold'
+                              : 'text-emerald-700 font-semibold'
+                          }
+                        >
+                          {c.role}
+                        </span>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {activeModule === 'reviews' && (
+          <div className="space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+              <div>
+                <div className="text-xs font-mono-tabular text-[#9A7411]">
+                  CLIENT FEEDBACK &amp; RATINGS LEDGER
+                </div>
+                <h3 className="text-lg font-serif-display font-semibold text-[#0B192C] mt-0.5">
+                  Verified Customer Reviews ({reviews.length} Published · Avg {averageReviewRating} / 5.0 ★)
+                </h3>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {reviews.map((rev) => (
+                <div
+                  key={rev.id}
+                  className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2.5 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <span className="font-semibold text-[#0B192C] text-sm">
+                        {rev.reviewerName}
+                      </span>
+                      <span className="text-slate-500">
+                        {' '}
+                        · {rev.reviewerRole} ({rev.location})
+                      </span>
+                    </div>
+                    <span className="font-mono-tabular font-bold text-[#9A7411]">
+                      {'★'.repeat(Math.max(1, Math.min(5, Number(rev.rating || 5))))} ({rev.rating}/5)
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono-tabular text-emerald-800">
+                    Estate / Service: {rev.propertyTitle}
+                  </div>
+                  <p className="text-slate-700 leading-relaxed">&ldquo;{rev.comment}&rdquo;</p>
+                </div>
+              ))}
             </div>
           </div>
         )}

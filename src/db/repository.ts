@@ -15,6 +15,7 @@ import {
   chatbotMessages,
   notifications,
   auditLogs,
+  reviews,
 } from './schema.ts';
 
 const ADMIN_EMAILS = ['williamjoy621@gmail.com'];
@@ -262,7 +263,33 @@ export async function updateUserProfile(
 
 export async function listAllProfiles() {
   try {
-    return await db.select().from(profiles).orderBy(desc(profiles.createdAt));
+    const [allProfiles, allUsers] = await Promise.all([
+      db.select().from(profiles).orderBy(desc(profiles.createdAt)),
+      db.select().from(users).orderBy(desc(users.createdAt)),
+    ]);
+
+    const profileMap = new Map(allProfiles.map((p) => [p.uid, p]));
+    for (const u of allUsers) {
+      if (!profileMap.has(u.uid)) {
+        profileMap.set(u.uid, {
+          id: u.id,
+          uid: u.uid,
+          email: u.email,
+          fullName: u.fullName || u.email.split('@')[0] || 'Valued Client',
+          phone: u.phone || '+2348144833743',
+          address: 'Lagos',
+          city: 'Lagos',
+          state: 'Lagos State',
+          role: u.role,
+          preferredLocation: 'Ibeju-Lekki, Lagos',
+          investmentBudget: 15000000,
+          createdAt: u.createdAt,
+          updatedAt: u.createdAt,
+        });
+      }
+    }
+
+    return Array.from(profileMap.values());
   } catch (error) {
     console.error('Database query failed in listAllProfiles:', error);
     throw new Error('Failed to load customer profiles.', { cause: error });
@@ -947,3 +974,66 @@ export async function logChatbotExchange(params: {
     throw new Error('Failed to log chatbot conversation.', { cause: error });
   }
 }
+
+export async function listReviews() {
+  try {
+    return await db.select().from(reviews).orderBy(desc(reviews.createdAt), desc(reviews.id));
+  } catch (error) {
+    console.error('Database query failed in listReviews:', error);
+    throw new Error('Failed to fetch customer reviews.', { cause: error });
+  }
+}
+
+export async function createReviewRecord(data: {
+  userUid?: string | null;
+  reviewerName: string;
+  reviewerRole?: string;
+  reviewerEmail?: string;
+  location?: string;
+  propertyTitle?: string;
+  rating: number;
+  comment: string;
+}) {
+  try {
+    const cleanRating = Math.min(5, Math.max(1, Number(data.rating || 5)));
+    const inserted = await db
+      .insert(reviews)
+      .values({
+        userUid: data.userUid || null,
+        reviewerName: data.reviewerName.trim(),
+        reviewerRole: (data.reviewerRole || 'Verified Land Investor').trim(),
+        reviewerEmail: (data.reviewerEmail || '').trim(),
+        location: (data.location || 'Lagos, Nigeria').trim(),
+        propertyTitle: (data.propertyTitle || 'General Consultancy & Verification').trim(),
+        rating: cleanRating,
+        comment: data.comment.trim(),
+        verifiedPurchase: true,
+        status: 'Published',
+      })
+      .returning();
+
+    const created = inserted[0];
+
+    await db.insert(notifications).values({
+      userUid: 'ADMIN',
+      title: `New ${cleanRating}-Star Customer Review Published`,
+      body: `${created.reviewerName} reviewed "${created.propertyTitle}": "${created.comment.slice(0, 100)}"`,
+      category: 'review',
+    });
+
+    await db.insert(auditLogs).values({
+      actorUid: created.userUid || 'customer',
+      actorEmail: created.reviewerEmail || 'verified-client@joyconsultant.ng',
+      action: 'SUBMIT_CUSTOMER_REVIEW',
+      entityType: 'review',
+      entityId: String(created.id),
+      details: `${created.reviewerName} submitted a ${cleanRating}-star review for ${created.propertyTitle}`,
+    });
+
+    return created;
+  } catch (error) {
+    console.error('Database query failed in createReviewRecord:', error);
+    throw new Error('Failed to submit customer review.', { cause: error });
+  }
+}
+

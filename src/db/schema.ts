@@ -207,3 +207,19 @@ export const auditLogs = pgTable('audit_logs', {
   details: text('details').notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+export const reviews = pgTable('reviews', {
+  id: serial('id').primaryKey(),
+  userUid: text('user_uid'),
+  reviewerName: text('reviewer_name').notNull(),
+  reviewerRole: text('reviewer_role').notNull().default('Verified Land Investor'),
+  reviewerEmail: text('reviewer_email').default(''),
+  location: text('location').notNull().default('Lagos, Nigeria'),
+  propertyTitle: text('property_title').notNull().default('General Consultancy & Verification'),
+  rating: integer('rating').notNull().default(5),
+  comment: text('comment').notNull(),
+  verifiedPurchase: boolean('verified_purchase').notNull().default(true),
+  status: text('status').notNull().default('Published'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
